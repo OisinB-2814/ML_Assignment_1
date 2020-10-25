@@ -1,0 +1,221 @@
+---
+title: "LDA_OB"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Import the necessary packages 
+
+```{r}
+library(klaR)
+library(tidyverse)
+library(caret)
+library(MASS)
+library(scales)
+theme_set(theme_classic())
+
+```
+
+2. Import the training dataset and clean
+
+```{r}
+beers_train <- read.table("C:/Users/Oisin/Desktop/ML Assignment 1/Data/beer_training.txt")
+
+colnames(beers_train) <- c('calorific_value', 'nitrogen', 'turbidity', 'style', 'alcohol', 'sugars', 'bitterness', 'beer_id', 'colour', 'degree_of_fermentation')
+
+rownames(beers_train) <- beers_train$beer_id
+
+beers_train <- arrange(beers_train,by=style)
+
+beers_train <- beers_train %>% relocate(style)
+
+beers_train <- subset(beers_train, select = -c(beer_id))
+
+beers_train
+```
+3. Import the test dataset and clean
+
+```{r}
+beers_test <- read.table("C:/Users/Oisin/Desktop/ML Assignment 1/Data/beer_test.txt")
+
+colnames(beers_test) <- c('calorific_value', 'nitrogen', 'turbidity', 'style', 'alcohol', 'sugars', 'bitterness', 'beer_id', 'colour', 'degree_of_fermentation')
+
+rownames(beers_test) <- beers_test$beer_id
+
+beers_test <- arrange(beers_test,by=style)
+
+beers_test <- beers_test %>% relocate(style)
+
+beers_test <- subset(beers_test, select = -c(beer_id))
+
+beers_test
+```
+4. Apply a preprocessing technique to my data to get it ready for LDA:
+  “center“: subtract mean from values.
+  “scale“: divide values by standard deviation.
+
+```{r}
+preproc.param <- beers_train %>% 
+  preProcess(method = c("center", "scale"))
+# Transform the data using the estimated parameters
+train.transformed <- preproc.param %>% predict(beers_train)
+test.transformed <- preproc.param %>% predict(beers_test)
+```
+
+```{r}
+train.transformed
+```
+
+```{r}
+test.transformed
+```
+5. Fit the model to the transformed data and look at the predictions on the test set
+
+```{r}
+# Fit the model
+model <- lda(style~., data = train.transformed)
+# Make predictions
+predictions <- model %>% predict(test.transformed)
+```
+
+```{r}
+model
+```
+```{r}
+plot(model)
+```
+
+6. Linear discriminants are calculated by the prediction and are the result on dimensionality reduction on the feature attributes
+
+```{r}
+# Predicted classes
+(predictions$class)
+# Predicted probabilities of class memebership.
+(predictions$posterior) 
+# Linear discriminants
+predictions$x
+```
+7. Look at the resulting plot of LD1 vs LD2
+
+```{r}
+predictions <- as.data.frame(predictions)
+
+predictions
+
+ggplot(predictions, aes(x=x.LD1,y=x.LD2,color=class)) +
+  geom_point()
+```
+
+8. Add LDA1 and LDA2 to our transformed training data 
+
+```{r}
+lda.data <- cbind(train.transformed, predict(model)$x)
+
+lda.data
+```
+
+9. Check that the resulting plot is the same as above
+
+```{r}
+ggplot(lda.data, aes(LD1, LD2)) +
+  geom_point(aes(color = style))
+
+ggsave("LDA_OB.png")
+
+```
+
+10. Use the model to give a score for the accuracy on the test data - 100% 
+
+```{r}
+mean(predictions$class==test.transformed$style)
+```
+
+11. Look at the confusion matrix for the training & test data -  note that it is 98% accurate while the test set is 100% 
+
+```{r}
+beers.train.lda.predict <- train(style ~ ., method = "lda", data = train.transformed)
+confusionMatrix(train.transformed$style, predict(beers.train.lda.predict, train.transformed))
+```
+
+```{r}
+beers.test.lda.predict <- train(style ~ ., method = "lda", data = beers_test)
+confusionMatrix(beers_test$style, predict(beers.test.lda.predict, beers_test))
+```
+
+12. Plot the boundaries computed by LDA to visually see where the mistakes were made in the training data
+
+```{r}
+fit <- lda(style ~ ., data = train.transformed, prior = rep(1, 3)/3)
+datPred <- data.frame(style=predict(fit)$class,predict(fit)$x)
+#Create decision boundaries
+fit2 <- lda(style ~ LD1 + LD2, data=datPred, prior = rep(1, 3)/3)
+datPred <- datPred[-65,]
+ld1lim <- expand_range(c(min(datPred$LD1),max(datPred$LD1)),mul=0.05)
+ld2lim <- expand_range(c(min(datPred$LD2),max(datPred$LD2)),mul=0.05)
+ld1 <- seq(ld1lim[[1]], ld1lim[[2]], length.out=300)
+ld2 <- seq(ld2lim[[1]], ld1lim[[2]], length.out=300)
+newdat <- expand.grid(list(LD1=ld1,LD2=ld2))
+preds <-predict(fit2,newdata=newdat)
+predclass <- preds$class
+postprob <- preds$posterior
+df <- data.frame(x=newdat$LD1, y=newdat$LD2, class=predclass)
+df$classnum <- as.numeric(df$class)
+df <- cbind(df,postprob)
+```
+
+```{r dpi = 200}
+colorfun <- function(n,l=65,c=100) { hues = seq(15, 375, length=n+1); hcl(h=hues, l=l, c=c)[1:n] } # default ggplot2 colours
+colors <- colorfun(3)
+colorslight <- colorfun(3,l=90,c=50)
+ggplot(datPred, aes(x=LD1, y=LD2) ) +
+    geom_raster(data=df, aes(x=x, y=y, fill = factor(class)),alpha=0.7,show_guide=FALSE) +
+    geom_contour(data=df, aes(x=x, y=y, z=classnum), colour="red2", alpha=0.5, breaks=c(1.5,2.5)) +
+    geom_point(data = datPred, size = 3, aes(colour=style)) +
+    scale_x_continuous(limits = ld1lim, expand=c(0,0)) +
+    scale_y_continuous(limits = ld2lim, expand=c(0,0)) +
+    scale_fill_manual(values=colorslight,guide=F)
+ggsave("LDA_OB1.png")
+```
+
+13. Plot a similar graph for the test data
+
+```{r}
+fit <- lda(style ~ ., data = test.transformed, prior = rep(1, 3)/3)
+datPred <- data.frame(style=predict(fit)$class,predict(fit)$x)
+#Create decision boundaries
+fit2 <- lda(style ~ LD1 + LD2, data=datPred, prior = rep(1, 3)/3)
+ld1lim <- expand_range(c(min(datPred$LD1),max(datPred$LD1)),mul=0.05)
+ld2lim <- expand_range(c(min(datPred$LD2),max(datPred$LD2)),mul=0.05)
+ld1 <- seq(ld1lim[[1]], ld1lim[[2]], length.out=300)
+ld2 <- seq(ld2lim[[1]], ld1lim[[2]], length.out=300)
+newdat <- expand.grid(list(LD1=ld1,LD2=ld2))
+preds <-predict(fit2,newdata=newdat)
+predclass <- preds$class
+postprob <- preds$posterior
+df <- data.frame(x=newdat$LD1, y=newdat$LD2, class=predclass)
+df$classnum <- as.numeric(df$class)
+df <- cbind(df,postprob)
+datPred
+```
+
+```{r}
+colorfun <- function(n,l=65,c=100) { hues = seq(15, 375, length=n+1); hcl(h=hues, l=l, c=c)[1:n] } # default ggplot2 colours
+colors <- colorfun(3)
+colorslight <- colorfun(3,l=90,c=50)
+ggplot(datPred, aes(x=LD1, y=LD2) ) +
+    geom_raster(data=df, aes(x=x, y=y, fill = factor(class)),alpha=0.7,show_guide=FALSE) +
+    geom_contour(data=df, aes(x=x, y=y, z=classnum), colour="red2", alpha=0.5, breaks=c(1.5,2.5)) +
+    geom_point(data = datPred, size = 3, aes(colour=style)) +
+    scale_x_continuous(limits = ld1lim, expand=c(0,0)) +
+    scale_y_continuous(limits = ld2lim, expand=c(0,0)) +
+    scale_fill_manual(values=colorslight,guide=F)
+
+ggsave("LDA_TEST_OB.png")
+```
+
+
